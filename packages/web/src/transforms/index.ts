@@ -2,6 +2,7 @@ export * from "./AgentTransform";
 export * from "./AIMessageChunkTransform";
 export * from "./AssemblyAISTTTransform";
 export * from "./ElevenLabsTTSTransform";
+export * from "./HumeTTSTransform";
 export * from "./openai";
 export * from "./SentenceChunkerTransform";
 export * from "./VADBufferTransform";

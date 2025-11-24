@@ -11,8 +11,9 @@ import {
   AssemblyAISTTTransform,
   AgentTransform,
   AIMessageChunkTransform,
-  ElevenLabsTTSTransform,
-  SentenceChunkTransform,
+  HumeTTSTransform,
+  // ElevenLabsTTSTransform,
+  // SentenceChunkTransform,
 } from "./transforms";
 
 const app = new Hono();
@@ -46,13 +47,17 @@ app.get(
       )
       .pipeThrough(new AgentTransform(agent))
       .pipeThrough(new AIMessageChunkTransform())
+      .pipeThrough(new HumeTTSTransform({
+        apiKey: process.env.HUME_API_KEY!,
+        voiceName: process.env.HUME_VOICE_NAME!,
+      }))
       // .pipeThrough(new SentenceChunkTransform()) // Stream sentences to TTS as they're generated
-      .pipeThrough(
-        new ElevenLabsTTSTransform({
-          apiKey: process.env.ELEVENLABS_API_KEY!,
-          voiceId: process.env.ELEVENLABS_VOICE_ID!,
-        })
-      );
+      // .pipeThrough(
+      //   new ElevenLabsTTSTransform({
+      //     apiKey: process.env.ELEVENLABS_API_KEY!,
+      //     voiceId: process.env.ELEVENLABS_VOICE_ID!,
+      //   })
+      // );
 
     const reader = pipeline.getReader();
     let pipelineClosed = false;
