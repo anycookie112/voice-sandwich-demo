@@ -1,6 +1,5 @@
 import eslint from "@eslint/js";
 import importPlugin from "eslint-plugin-import";
-import importHelpersPlugin from "eslint-plugin-import-helpers";
 import commentLengthPlugin from "eslint-plugin-comment-length";
 import tseslint from "typescript-eslint";
 
@@ -31,7 +30,6 @@ export default tseslint.config(
       },
     },
     plugins: {
-      "import-helpers": importHelpersPlugin,
       "comment-length": commentLengthPlugin,
     },
     rules: {
@@ -44,15 +42,14 @@ export default tseslint.config(
         { fixMixedExportsWithInlineTypeSpecifier: true },
       ],
       "import/no-unresolved": "off",
-      "import-helpers/order-imports": [
+      "import/order": [
         "warn",
         {
-          newlinesBetween: "always",
-          groups: ["module", ["parent", "sibling", "index"]],
-
+          "newlines-between": "always",
+          groups: ["builtin", "external", "internal", "parent", "sibling", "index"],
           alphabetize: {
             order: "asc",
-            ignoreCase: true,
+            caseInsensitive: true,
           },
         },
       ],

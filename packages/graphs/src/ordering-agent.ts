@@ -38,7 +38,7 @@ You are a helpful sandwich shop assistant. Your goal is to take the user's order
 
 export const agent = createAgent({
   model: new ChatGoogleGenerativeAI({
-    model: "gemini-3-pro-preview",
+    model: "gemini-2.5-flash",
   }),
   tools: [addToOrder, confirmOrder],
   systemPrompt: SYSTEM_PROMPT,

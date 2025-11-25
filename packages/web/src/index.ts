@@ -1,11 +1,14 @@
 import "dotenv/config";
+
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { agent } from "@voice-sandwich-demo/graphs";
-import { readFileSync } from "fs";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { join } from "path";
+
 
 import {
   AssemblyAISTTTransform,
@@ -17,6 +20,7 @@ import {
   // ElevenLabsTTSTransform,
   // SentenceChunkTransform,
 } from "./transforms";
+export * from "./transforms";
 
 const app = new Hono();
 
@@ -27,17 +31,19 @@ app.use("/*", cors());
 // Shared pipeline visualizer for WebSocket streaming
 const pipelineVisualizer = new PipelineVisualizer();
 
-// Serve static HTML
-const htmlPath = join(process.cwd(), "src/static/index.html");
-const html = readFileSync(htmlPath, "utf-8");
-
-// Serve pipeline visualizer JS
-const visualizerJsPath = join(process.cwd(), "src/static/pipeline-visualizer.js");
-const visualizerJs = readFileSync(visualizerJsPath, "utf-8");
-
-app.get("/", (c) => c.html(html));
+app.get("/", (c) => {
+  // Serve static HTML
+  const htmlPath = join(process.cwd(), "src/static/index.html");
+  const html = readFileSync(htmlPath, "utf-8");
+  
+  return c.html(html)
+});
 
 app.get("/pipeline-visualizer.js", (c) => {
+  // Serve pipeline visualizer JS
+  const visualizerJsPath = join(process.cwd(), "src/static/pipeline-visualizer.js");
+  const visualizerJs = readFileSync(visualizerJsPath, "utf-8");
+  
   c.header("Content-Type", "application/javascript");
   return c.body(visualizerJs);
 });

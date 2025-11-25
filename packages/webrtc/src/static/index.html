@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Voice Sandwich (WebSocket)</title>
+    <title>Voice Sandwich (WebRTC)</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -169,7 +169,7 @@
 <body>
     <div class="container">
         <div class="panel controls-panel">
-            <h1>🥪 Voice Sandwich <span class="transport-badge">WebSocket</span></h1>
+            <h1>🥪 Voice Sandwich <span class="transport-badge">WebRTC</span></h1>
             <div class="button-group">
                 <button id="startBtn">Start Recording</button>
                 <button id="stopBtn" disabled>Stop</button>
@@ -193,13 +193,24 @@
         const statusDot = document.getElementById('statusDot');
         const logDiv = document.getElementById('log');
         
-        let ws;
+        // WebRTC and signaling
+        let signalingWs;
+        let peerConnection;
+        let audioDataChannel;
+        
+        // Audio handling
         let audioContext;
         let workletNode;
         let mediaStream;
         let nextStartTime = 0;
 
         const TARGET_SAMPLE_RATE = 16000;
+
+        // ICE servers configuration
+        const iceServers = [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+        ];
 
         function log(msg) {
             const p = document.createElement('div');
@@ -278,68 +289,57 @@
             log(`Audio initialized (${audioContext.sampleRate}Hz)`);
         }
 
-        startBtn.onclick = async () => {
-            setStatus('Connecting...', 'idle');
-            startBtn.disabled = true;
-            
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
-            ws.binaryType = 'arraybuffer';
-            
-            ws.onopen = async () => {
-                setStatus('Recording', 'recording');
-                log('Connected to server');
-                stopBtn.disabled = false;
-
-                try {
-                    // Setup AudioWorklet if not already done
-                    if (!audioContext) {
-                        await setupAudioWorklet();
-                    }
-                    
-                    if (audioContext.state === 'suspended') {
-                        await audioContext.resume();
-                    }
-
-                    // Get microphone stream
-                    mediaStream = await navigator.mediaDevices.getUserMedia({ 
-                        audio: {
-                            echoCancellation: true,
-                            noiseSuppression: true,
-                            autoGainControl: true,
-                        }
-                    });
-                    log('Microphone active');
-                    
-                    // Create source from microphone
-                    const source = audioContext.createMediaStreamSource(mediaStream);
-                    
-                    // Create worklet node
-                    workletNode = new AudioWorkletNode(audioContext, 'pcm-processor');
-                    
-                    // Handle PCM data from worklet
-                    workletNode.port.onmessage = (event) => {
-                        if (ws && ws.readyState === WebSocket.OPEN) {
-                            ws.send(event.data);
-                        }
-                    };
-                    
-                    // Connect: microphone -> worklet
-                    source.connect(workletNode);
-                    // Don't connect to destination (we don't want to hear ourselves)
-                    
-                    log('Streaming audio (16kHz PCM)');
-                } catch (err) {
-                    console.error(err);
-                    log('Microphone error: ' + err.message);
-                    setStatus('Error', 'idle');
-                    resetUI();
+        async function setupMicrophone() {
+            try {
+                // Setup AudioWorklet if not already done
+                if (!audioContext) {
+                    await setupAudioWorklet();
                 }
-            };
+                
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
 
-            ws.onmessage = async (event) => {
-                // We expect audio buffers from the server (PCM 16000Hz 16-bit Mono)
-                if (event.data instanceof ArrayBuffer) {
+                // Get microphone stream
+                mediaStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true,
+                    }
+                });
+                log('Microphone active');
+                
+                // Create source from microphone
+                const source = audioContext.createMediaStreamSource(mediaStream);
+                
+                // Create worklet node
+                workletNode = new AudioWorkletNode(audioContext, 'pcm-processor');
+                
+                // Handle PCM data from worklet - send via WebRTC data channel
+                workletNode.port.onmessage = (event) => {
+                    if (audioDataChannel && audioDataChannel.readyState === 'open') {
+                        audioDataChannel.send(event.data);
+                    }
+                };
+                
+                // Connect: microphone -> worklet
+                source.connect(workletNode);
+                // Don't connect to destination (we don't want to hear ourselves)
+                
+                log('Streaming audio via WebRTC (16kHz PCM)');
+            } catch (err) {
+                console.error(err);
+                log('Microphone error: ' + err.message);
+                setStatus('Error', 'idle');
+                resetUI();
+            }
+        }
+
+        function handleIncomingAudio(data) {
+            // We expect audio buffers from the server (PCM 16000Hz 16-bit Mono)
+            if (data instanceof ArrayBuffer) {
+                (async () => {
                     if (!audioContext) {
                         audioContext = new (window.AudioContext || window.webkitAudioContext)();
                     }
@@ -349,7 +349,7 @@
 
                     try {
                         // Ensure even byte length for Int16
-                        let buffer = event.data;
+                        let buffer = data;
                         if (buffer.byteLength % 2 !== 0) {
                             console.warn("Received odd byte length audio chunk, trimming last byte");
                             buffer = buffer.slice(0, buffer.byteLength - 1);
@@ -385,20 +385,126 @@
                     } catch (e) {
                         console.error('Error processing audio chunk', e);
                     }
-                } else {
-                    log('Server: ' + event.data);
+                })();
+            }
+        }
+
+        startBtn.onclick = async () => {
+            setStatus('Connecting...', 'idle');
+            startBtn.disabled = true;
+            
+            // Connect to signaling WebSocket
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            signalingWs = new WebSocket(`${protocol}//${window.location.host}/ws/signaling`);
+            
+            signalingWs.onopen = async () => {
+                log('Signaling connected');
+                
+                try {
+                    // Create RTCPeerConnection
+                    peerConnection = new RTCPeerConnection({ iceServers });
+                    
+                    // Handle ICE candidates
+                    peerConnection.onicecandidate = (event) => {
+                        if (event.candidate && signalingWs.readyState === WebSocket.OPEN) {
+                            signalingWs.send(JSON.stringify({
+                                type: 'ice-candidate',
+                                candidate: event.candidate,
+                            }));
+                        }
+                    };
+                    
+                    peerConnection.oniceconnectionstatechange = () => {
+                        log(`ICE: ${peerConnection.iceConnectionState}`);
+                    };
+                    
+                    peerConnection.onconnectionstatechange = () => {
+                        log(`Connection: ${peerConnection.connectionState}`);
+                        if (peerConnection.connectionState === 'connected') {
+                            setStatus('Recording', 'recording');
+                        } else if (peerConnection.connectionState === 'disconnected' || 
+                                   peerConnection.connectionState === 'failed') {
+                            setStatus('Disconnected', 'idle');
+                            resetUI();
+                        }
+                    };
+                    
+                    // Create data channel for audio (client creates, server receives)
+                    audioDataChannel = peerConnection.createDataChannel('audio', {
+                        ordered: true,
+                        maxRetransmits: 3,
+                    });
+                    
+                    audioDataChannel.binaryType = 'arraybuffer';
+                    
+                    audioDataChannel.onopen = async () => {
+                        log('Audio channel open');
+                        stopBtn.disabled = false;
+                        // Setup microphone after data channel is ready
+                        await setupMicrophone();
+                    };
+                    
+                    audioDataChannel.onmessage = (event) => {
+                        handleIncomingAudio(event.data);
+                    };
+                    
+                    audioDataChannel.onclose = () => {
+                        log('Audio channel closed');
+                    };
+                    
+                    audioDataChannel.onerror = (err) => {
+                        console.error('Data channel error:', err);
+                        log('Audio channel error');
+                    };
+                    
+                    // Create and send offer
+                    const offer = await peerConnection.createOffer();
+                    await peerConnection.setLocalDescription(offer);
+                    
+                    signalingWs.send(JSON.stringify({
+                        type: 'offer',
+                        sdp: peerConnection.localDescription,
+                    }));
+                    log('Sent WebRTC offer');
+                    
+                } catch (err) {
+                    console.error('WebRTC setup error:', err);
+                    log('WebRTC error: ' + err.message);
+                    setStatus('Error', 'idle');
+                    resetUI();
+                }
+            };
+            
+            signalingWs.onmessage = async (event) => {
+                try {
+                    const message = JSON.parse(event.data);
+                    
+                    if (message.type === 'answer') {
+                        // Received SDP answer from server
+                        log('Received WebRTC answer');
+                        await peerConnection.setRemoteDescription(
+                            new RTCSessionDescription(message.sdp)
+                        );
+                    } else if (message.type === 'ice-candidate') {
+                        // Received ICE candidate from server
+                        if (message.candidate) {
+                            await peerConnection.addIceCandidate(message.candidate);
+                        }
+                    }
+                } catch (e) {
+                    console.error('Error processing signaling message:', e);
                 }
             };
 
-            ws.onclose = () => {
+            signalingWs.onclose = () => {
+                log('Signaling disconnected');
                 setStatus('Disconnected', 'idle');
-                log('Connection closed');
                 resetUI();
             };
             
-            ws.onerror = (e) => {
+            signalingWs.onerror = (e) => {
                 console.error(e);
-                log('Connection error');
+                log('Signaling error');
                 setStatus('Error', 'idle');
             };
         };
@@ -416,6 +522,24 @@
             if (mediaStream) {
                 mediaStream.getTracks().forEach(track => track.stop());
                 mediaStream = null;
+            }
+            
+            // Close data channel
+            if (audioDataChannel) {
+                audioDataChannel.close();
+                audioDataChannel = null;
+            }
+            
+            // Close peer connection
+            if (peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+            }
+            
+            // Close signaling WebSocket
+            if (signalingWs) {
+                signalingWs.close();
+                signalingWs = null;
             }
 
             resetUI();
