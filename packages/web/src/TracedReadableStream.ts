@@ -79,17 +79,6 @@ export class TracedTransformStream<I = any, O = any> extends TransformStream<
       transform: async (chunk) => {
         const parentRun = getParentRun();
 
-        const run = parentRun
-          ? await parentRun.createChild({
-              name,
-              run_type: runType,
-              inputs: { input: chunk },
-              extra: { metadata },
-            })
-          : undefined;
-
-        if (run) await run.postRun();
-
         try {
           const writer = stream.writable.getWriter();
 
@@ -99,9 +88,9 @@ export class TracedTransformStream<I = any, O = any> extends TransformStream<
               await writer.write(c);
             },
             {
-              name: "TransformStream.write",
+              name,
               run_type: "chain",
-              parent_run: run,
+              parent_run: parentRun,
             }
           );
 
@@ -117,18 +106,14 @@ export class TracedTransformStream<I = any, O = any> extends TransformStream<
 
           writer.releaseLock();
 
-          if (run) {
-            await run.end({ status: "dispatched" });
-            await run.patchRun();
-          }
+          await parentRun?.end({ status: "dispatched" });
+          await parentRun?.patchRun();
         } catch (err) {
-          if (run) {
-            await run.end(
-              undefined,
-              err instanceof Error ? err.message : String(err)
-            );
-            await run.patchRun();
-          }
+          await parentRun?.end(
+            undefined,
+            err instanceof Error ? err.message : String(err)
+          );
+          await parentRun?.patchRun();
           throw err;
         }
       },
