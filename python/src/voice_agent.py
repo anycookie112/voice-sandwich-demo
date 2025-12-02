@@ -155,8 +155,9 @@ class VoicePipeline:
         )
         self.turn_number = 0
 
-        self.audio_stream = (
-            RunnableGenerator(self._buffer_and_transcribe)
+        self.pipeline = (
+            RunnableGenerator(self._buffer_node)
+            | RunnableGenerator(self._transcribe_node)
             | RunnableGenerator(self._agent_stream)
             | RunnableGenerator(self._tts_stream)
         )
@@ -229,15 +230,35 @@ class VoicePipeline:
                 await send_task
             await stt.close()
 
+    async def _buffer_node(
+        self, message_stream: AsyncIterator[HumanMessage]
+    ) -> AsyncIterator[HumanMessage]:
+        """Pass-through node that yields each HumanMessage as-is."""
+        async for message in message_stream:
+            yield message
+
+    async def _transcribe_node(
+        self, message_stream: AsyncIterator[HumanMessage]
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Extract transcript metadata for downstream agent consumption."""
+        async for message in message_stream:
+            metadata = getattr(message, "response_metadata", {}) or {}
+            transcript = metadata.get("transcript")
+            turn = metadata.get("turn")
+            if not transcript:
+                print("[DEBUG] _transcribe_node: Missing transcript, skipping message")
+                continue
+            yield {"turn": turn, "transcript": transcript}
+
     async def _agent_stream(
-        self, transcript_stream: AsyncIterator[HumanMessage]
+        self, transcript_stream: AsyncIterator[dict[str, Any]]
     ) -> AsyncIterator[dict[str, Any]]:
         """
         Pass transcripts to the LangChain agent and emit full responses.
         """
         async for payload in transcript_stream:
-            transcript = payload.response_metadata["transcript"]
-            turn = payload.response_metadata["turn"]
+            transcript = payload["transcript"]
+            turn = payload.get("turn")
 
             print(f"\n[User {turn}]: {transcript}")
             print("[Agent]: ", end="", flush=True)
@@ -295,16 +316,34 @@ class VoicePipeline:
     async def run(self, audio_stream: AudioStream) -> None:
         """Drive the LCEL pipeline for the provided audio stream."""
 
+        message_stream = self._buffer_and_transcribe(audio_stream)
         last_output: Any = None
+
+        async def single_turn_stream(message: HumanMessage) -> AsyncIterator[HumanMessage]:
+            yield message
+
         try:
-            async for output in self.audio_stream.atransform(audio_stream):
-                last_output = output
-                print(f"[DEBUG] VoicePipeline.run: pipeline output {output}")
+            while True:
+                try:
+                    message = await message_stream.__anext__()
+                except StopAsyncIteration:
+                    break
+
+                async for output in self.pipeline.atransform(
+                    single_turn_stream(message)
+                ):
+                    last_output = output
+                    print(f"[DEBUG] VoicePipeline.run: pipeline output {output}")
         except KeyboardInterrupt:
             raise
         except Exception as exc:  # pragma: no cover - defensive logging
             print(f"[DEBUG] VoicePipeline.run: pipeline error: {exc}")
             print(f"[DEBUG] VoicePipeline.run: last output {last_output}")
+        finally:
+            aclose = getattr(message_stream, "aclose", None)
+            if aclose is not None:
+                with contextlib.suppress(Exception):
+                    await aclose()
 
 
 async def main():
@@ -333,7 +372,10 @@ async def main():
         import traceback
         traceback.print_exc()
     finally:
-        await audio_stream.aclose()
+        aclose = getattr(audio_stream, "aclose", None)
+        if aclose is not None:
+            with contextlib.suppress(Exception):
+                await aclose()
 
 
 if __name__ == "__main__":
