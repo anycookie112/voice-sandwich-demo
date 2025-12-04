@@ -228,7 +228,10 @@ async def serve_index():
 
 @app.get("/{path:path}")
 async def serve_path(path: str):
-    return FileResponse(STATIC_DIR / path)
+    file_path = STATIC_DIR / path
+    if file_path.exists() and file_path.is_file():
+        return FileResponse(file_path)
+    raise HTTPException(status_code=404, detail="Not found")
 
 
 @app.websocket("/ws")
