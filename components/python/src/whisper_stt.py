@@ -214,7 +214,3 @@ class LocalWhisperSTT:
         return cleaned
 
 
-git config --global user.name "anycookie112"
-git config --global user.email "anycookiefor@gmail.com"
-
-
