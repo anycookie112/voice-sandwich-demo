@@ -1,0 +1,32 @@
+Frontend Architecture & Real-Time Data Flow
+
+1. Audio Capture & Processing
+   - File: components/web/src/lib/audio/capture.ts
+   - Mechanism: Uses AudioWorklet ("pcm-processor") to capture raw microphone input.
+   - Processing:
+     - Downsamples audio to 16kHz.
+     - Converts it to 16-bit PCM (Int16).
+     - Batches into chunks of 1600 samples (0.1s).
+     - Result is an Int16Array (ArrayBuffer).
+
+2. WebSocket Communication
+   - File: components/web/src/lib/websocket.ts
+   - Connection: Establishes a WebSocket connection to ws://localhost:8000/ws.
+   - Sending: Sends the raw binary chunks (ArrayBuffer) directly to the server.
+   - Receiving: Listens for JSON events from the server (stt_chunk, agent_chunk, tts_chunk, etc.).
+
+3. Real-Time Data Flow
+
+   Input Path (Mic -> Server):
+   1. User speaks -> Browser Microphone API
+   2. PCMProcessor worklet downsamples & formats audio.
+   3. websocket.ts sends binary data to Server.
+
+   Output Path (Server -> Speaker/UI):
+   1. Transcription: Server sends 'stt_chunk' -> UI updates current transcript live.
+   2. Agent Response: Server sends 'agent_chunk' -> UI shows text being generated.
+   3. Audio Output: Server sends 'tts_chunk' (encoded audio) -> websocket.ts receives it.
+   4. Playback: audioPlayback queue (lib/audio/playback.ts) plays the audio chunks sequentially.
+
+   State Management:
+   All state updates (showing text, managing turn status) are handled via Svelte stores in lib/stores.

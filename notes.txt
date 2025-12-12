@@ -1,0 +1,2 @@
+pnpm build --watch
+uv run src/main.py

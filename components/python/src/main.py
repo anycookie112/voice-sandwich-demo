@@ -14,8 +14,8 @@ from langchain_core.runnables import RunnableGenerator
 from langgraph.checkpoint.memory import InMemorySaver
 from starlette.staticfiles import StaticFiles
 
-from assemblyai_stt import AssemblyAISTT
-from components.python.src.cartesia_tts import CartesiaTTS
+# from assemblyai_stt import AssemblyAISTT
+# from components.python.src.cartesia_tts import CartesiaTTS
 from events import (
     AgentChunkEvent,
     AgentEndEvent,
@@ -25,7 +25,9 @@ from events import (
     event_to_dict,
 )
 from utils import merge_async_iters
-
+from whisper_stt import LocalWhisperSTT 
+from kokoro_tts import KokoroTTS
+from models import get_ollama_model
 load_dotenv()
 
 # Static files are served from the shared web build output
@@ -69,8 +71,9 @@ Available cheeses: swiss, cheddar, provolone.
 ${CARTESIA_TTS_SYSTEM_PROMPT}
 """
 
+llm = get_ollama_model()
 agent = create_agent(
-    model="anthropic:claude-haiku-4-5",
+    model=llm,
     tools=[add_to_order, confirm_order],
     system_prompt=system_prompt,
     checkpointer=InMemorySaver(),
@@ -99,7 +102,7 @@ async def _stt_stream(
     Yields:
         STT events (stt_chunk for partials, stt_output for final transcripts)
     """
-    stt = AssemblyAISTT(sample_rate=16000)
+    stt = LocalWhisperSTT(sample_rate=16000)
 
     async def send_audio():
         """
@@ -234,7 +237,7 @@ async def _tts_stream(
     Yields:
         All upstream events plus tts_chunk events for synthesized audio
     """
-    tts = CartesiaTTS()
+    tts = KokoroTTS()
 
     async def process_upstream() -> AsyncIterator[VoiceAgentEvent]:
         """
