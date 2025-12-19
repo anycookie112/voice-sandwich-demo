@@ -71,7 +71,8 @@ Available cheeses: swiss, cheddar, provolone.
 ${CARTESIA_TTS_SYSTEM_PROMPT}
 """
 
-llm = get_ollama_model()
+llm = get_groq_model(api_key = "")
+# llm = get_ollama_model()
 agent = create_agent(
     model=llm,
     tools=[add_to_order, confirm_order],
