@@ -26,8 +26,9 @@ from events import (
 )
 from utils import merge_async_iters
 from whisper_stt import LocalWhisperSTT 
+from whisper_pytorch import WhisperPytorchSTT
 from kokoro_tts import KokoroTTS
-from models import get_ollama_model
+from models import get_ollama_model, get_groq_model
 load_dotenv()
 
 # Static files are served from the shared web build output
@@ -68,6 +69,8 @@ Available toppings: lettuce, tomato, onion, pickles, mayo, mustard.
 Available meats: turkey, ham, roast beef.
 Available cheeses: swiss, cheddar, provolone.
 
+The price for any sandwich is $5 plus $1 for each topping, meat, or cheese.
+
 ${CARTESIA_TTS_SYSTEM_PROMPT}
 """
 
@@ -103,7 +106,14 @@ async def _stt_stream(
     Yields:
         STT events (stt_chunk for partials, stt_output for final transcripts)
     """
-    stt = LocalWhisperSTT(sample_rate=16000)
+    stt = WhisperPytorchSTT(
+            model_size="large-v3-turbo",
+            sample_rate=16000,          # <= IMPORTANT: use the WAV's SR (likely 24000)
+            device="cuda",           # or "cpu" if you want CPU
+            compute_type="float16",  # safe
+            silence_threshold=50.0,  # make VAD more permissive
+            min_silence_chunks=3,    # detect utterance quickly
+        )
 
     async def send_audio():
         """
