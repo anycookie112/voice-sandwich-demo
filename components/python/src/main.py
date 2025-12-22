@@ -29,6 +29,7 @@ from whisper_stt import LocalWhisperSTT
 from whisper_pytorch import WhisperPytorchSTT
 from kokoro_tts import KokoroTTS
 from models import get_ollama_model, get_groq_model
+from vibevoice_tts import VibeVoiceAsyncTTS
 load_dotenv()
 
 # Static files are served from the shared web build output
@@ -82,6 +83,19 @@ agent = create_agent(
     system_prompt=system_prompt,
     checkpointer=InMemorySaver(),
 )
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 async def _stt_stream(
@@ -248,7 +262,7 @@ async def _tts_stream(
     Yields:
         All upstream events plus tts_chunk events for synthesized audio
     """
-    tts = KokoroTTS()
+    tts = VibeVoiceAsyncTTS(model_path = "/home/robust/models/VibeVoice-Realtime-0.5B")
 
     async def process_upstream() -> AsyncIterator[VoiceAgentEvent]:
         """

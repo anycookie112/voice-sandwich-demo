@@ -64,82 +64,86 @@
 
 
 
-import asyncio
-import wave
-from pathlib import Path
+# import asyncio
+# import wave
+# from pathlib import Path
 
-from whisper_stt import LocalWhisperSTT   # <-- adjust if filename is different
-from events import STTOutputEvent, STTChunkEvent  # just for isinstance checks
+# from whisper_stt import LocalWhisperSTT   # <-- adjust if filename is different
+# from events import STTOutputEvent, STTChunkEvent  # just for isinstance checks
 
-INPUT_WAV = "kokoro_test.wav"  # file written by Kokoro test
-
-
-async def main():
-    wav_path = Path(INPUT_WAV)
-    if not wav_path.exists():
-        print(f"[ERROR] WAV file not found: {wav_path.resolve()}")
-        return
-
-    print(f"[INFO] Using WAV file: {wav_path.resolve()}")
-
-    # Open WAV and inspect format
-    with wave.open(str(wav_path), "rb") as f:
-        channels = f.getnchannels()
-        sr = f.getframerate()
-        width = f.getsampwidth()
-        nframes = f.getnframes()
-
-        print(f"[INFO] WAV channels: {channels}")
-        print(f"[INFO] WAV sample rate: {sr}")
-        print(f"[INFO] WAV sample width: {width} bytes")
-        print(f"[INFO] WAV frames: {nframes}")
-
-        if channels != 1:
-            print("[ERROR] WAV must be mono (1 channel)")
-            return
-        if width != 2:
-            print("[ERROR] WAV must be 16-bit (2 bytes per sample)")
-            return
-
-        # Create STT with audio sample rate from file (Whisper will resample to 16k internally)
-        stt = LocalWhisperSTT(
-            model_size="large-v3",
-            sample_rate=sr,          # <= IMPORTANT: use the WAV's SR (likely 24000)
-            device="cpu",           # or "cpu" if you want CPU
-            compute_type="float32",  # safe
-            silence_threshold=50.0,  # make VAD more permissive
-            min_silence_chunks=3,    # detect utterance quickly
-        )
-
-        print("[INFO] Feeding audio chunks to LocalWhisperSTT...")
-
-        # Read the whole WAV as chunks (~20ms per chunk at given SR)
-        chunk_size_frames = int(sr * 0.02)  # ~20ms
-        while True:
-            data = f.readframes(chunk_size_frames)
-            if not data:
-                break
-            await stt.send_audio(data)
-
-        print("[INFO] Done sending audio. Closing STT stream...")
-        await stt.close()
-
-        print("[INFO] Collecting STT events:")
-        got_any = False
-
-        async for event in stt.receive_events():
-            got_any = True
-            print(f"[DEBUG] Got STT event: {event}")
-
-            if isinstance(event, STTOutputEvent):
-                print(f"[RESULT] Final transcript: {event.transcript!r}")
-            elif isinstance(event, STTChunkEvent):
-                print(f"[PARTIAL] Chunk: {event.transcript!r}")
+# INPUT_WAV = "kokoro_test.wav"  # file written by Kokoro test
 
 
-        if not got_any:
-            print("[WARN] No STT events were produced at all.")
+# async def main():
+#     wav_path = Path(INPUT_WAV)
+#     if not wav_path.exists():
+#         print(f"[ERROR] WAV file not found: {wav_path.resolve()}")
+#         return
+
+#     print(f"[INFO] Using WAV file: {wav_path.resolve()}")
+
+#     # Open WAV and inspect format
+#     with wave.open(str(wav_path), "rb") as f:
+#         channels = f.getnchannels()
+#         sr = f.getframerate()
+#         width = f.getsampwidth()
+#         nframes = f.getnframes()
+
+#         print(f"[INFO] WAV channels: {channels}")
+#         print(f"[INFO] WAV sample rate: {sr}")
+#         print(f"[INFO] WAV sample width: {width} bytes")
+#         print(f"[INFO] WAV frames: {nframes}")
+
+#         if channels != 1:
+#             print("[ERROR] WAV must be mono (1 channel)")
+#             return
+#         if width != 2:
+#             print("[ERROR] WAV must be 16-bit (2 bytes per sample)")
+#             return
+
+#         # Create STT with audio sample rate from file (Whisper will resample to 16k internally)
+#         stt = LocalWhisperSTT(
+#             model_size="large-v3",
+#             sample_rate=sr,          # <= IMPORTANT: use the WAV's SR (likely 24000)
+#             device="cpu",           # or "cpu" if you want CPU
+#             compute_type="float32",  # safe
+#             silence_threshold=50.0,  # make VAD more permissive
+#             min_silence_chunks=3,    # detect utterance quickly
+#         )
+
+#         print("[INFO] Feeding audio chunks to LocalWhisperSTT...")
+
+#         # Read the whole WAV as chunks (~20ms per chunk at given SR)
+#         chunk_size_frames = int(sr * 0.02)  # ~20ms
+#         while True:
+#             data = f.readframes(chunk_size_frames)
+#             if not data:
+#                 break
+#             await stt.send_audio(data)
+
+#         print("[INFO] Done sending audio. Closing STT stream...")
+#         await stt.close()
+
+#         print("[INFO] Collecting STT events:")
+#         got_any = False
+
+#         async for event in stt.receive_events():
+#             got_any = True
+#             print(f"[DEBUG] Got STT event: {event}")
+
+#             if isinstance(event, STTOutputEvent):
+#                 print(f"[RESULT] Final transcript: {event.transcript!r}")
+#             elif isinstance(event, STTChunkEvent):
+#                 print(f"[PARTIAL] Chunk: {event.transcript!r}")
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
+#         if not got_any:
+#             print("[WARN] No STT events were produced at all.")
+
+
+# if __name__ == "__main__":
+#     asyncio.run(main())
+from vibevoice_tts import VibeVoiceAsyncTTS
+
+services = VibeVoiceAsyncTTS(model_path = "/home/robust/models/VibeVoice-Realtime-0.5B")
+# services.test()

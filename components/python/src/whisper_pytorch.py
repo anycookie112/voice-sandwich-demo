@@ -407,7 +407,7 @@ import whisper
 
 from events import STTEvent, STTOutputEvent
 
-class LocalWhisperSTT:
+class WhisperPytorchSTT:
     def __init__(
         self,
         # AssemblyAI compatibility args
