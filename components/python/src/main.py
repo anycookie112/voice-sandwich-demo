@@ -75,8 +75,20 @@ The price for any sandwich is $5 plus $1 for each topping, meat, or cheese.
 ${CARTESIA_TTS_SYSTEM_PROMPT}
 """
 
-llm = get_groq_model(api_key = "")
-# llm = get_ollama_model()
+# 1. Check which provider to use (Defaults to "groq" if not set)
+provider = os.getenv("LLM_PROVIDER", "groq").lower()
+
+if provider == "ollama":
+    print("--> Using LLM Provider: Ollama")
+    llm = get_ollama_model()
+else:
+    print("--> Using LLM Provider: Groq")
+    # 2. Get Key from Environment (Don't hardcode "gsk_...")
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise ValueError("GROQ_API_KEY not found in environment variables!")
+    
+    llm = get_groq_model(api_key=api_key)
 
 from data_visualisation.main import main2 as make_agent
 # agent = create_agent(
