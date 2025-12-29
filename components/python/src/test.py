@@ -143,7 +143,7 @@
 
 # if __name__ == "__main__":
 #     asyncio.run(main())
-from vibevoice_tts import VibeVoiceAsyncTTS
+import os
+os.environ["CT2_VERBOSE"] = "1"
 
-services = VibeVoiceAsyncTTS(model_path = "/home/robust/models/VibeVoice-Realtime-0.5B")
-# services.test()
+import ctranslate2

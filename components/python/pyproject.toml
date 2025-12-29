@@ -3,8 +3,11 @@ name = "python-voice-agent"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
+    "accelerate>=1.12.0",
+    "diffusers>=0.36.0",
     "fastapi>=0.123.5",
     "faster-whisper>=1.2.1",
+    "flash-attn",
     "kokoro>=0.9.4",
     "langchain",
     "langchain-anthropic>=1.2.0",
@@ -13,15 +16,35 @@ dependencies = [
     "langchain-ollama>=1.0.1",
     "langchain-openai>=1.1.6",
     "langgraph>=1.0.4",
+    "matplotlib>=3.10.8",
     "numpy>=2.3.5",
     "openai-whisper>=20250625",
+    "pandas>=2.3.3",
     "python-dotenv",
     "rich>=14.2.0",
     "spacy>=3.8.11",
     "transformers==4.51.3",
     "uvicorn>=0.38.0",
     "websockets",
+
+    # 🔥 PyTorch CUDA
+    "torch",
+    "torchvision",
 ]
+
+# 🔥 CUDA 13.0 PyTorch index
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+# 🔥 Bind torch packages to that index
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
+torchvision = { index = "pytorch-cu130" }
+
+# 🔥 FlashAttention prebuilt wheel
+flash-attn = { url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.6.4/flash_attn-2.8.3+cu130torch2.9-cp311-cp311-linux_aarch64.whl" }
 
 [project.optional-dependencies]
 assemblyai = ["assemblyai"]

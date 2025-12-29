@@ -257,7 +257,24 @@ class TTSChunkEvent:
         return cls(type="tts_chunk", audio=audio, ts=_now_ms())
 
 
-VoiceAgentEvent = Union[UserInputEvent, STTEvent, AgentEvent, TTSChunkEvent]
+
+@dataclass
+class TTSEndEvent:
+    """
+    Event emitted when TTS synthesis is complete for a turn.
+
+    This signals downstream consumers (like the frontend) that all audio chunks for this turn have been sent.
+    """
+    type: Literal["tts_end"]
+    ts: int
+
+    @classmethod
+    def create(cls) -> "TTSEndEvent":
+        return cls(type="tts_end", ts=_now_ms())
+
+
+# Update VoiceAgentEvent union
+VoiceAgentEvent = Union[UserInputEvent, STTEvent, AgentEvent, TTSChunkEvent, TTSEndEvent]
 
 
 def event_to_dict(event: VoiceAgentEvent) -> dict:
@@ -294,5 +311,7 @@ def event_to_dict(event: VoiceAgentEvent) -> dict:
             "audio": base64.b64encode(event.audio).decode("ascii"),
             "ts": event.ts,
         }
+    elif isinstance(event, TTSEndEvent):
+        return {"type": event.type, "ts": event.ts}
     else:
         raise ValueError(f"Unknown event type: {type(event)}")

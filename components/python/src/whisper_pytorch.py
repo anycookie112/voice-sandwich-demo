@@ -463,7 +463,9 @@ class WhisperPytorchSTT:
     async def receive_events(self) -> AsyncIterator[STTEvent]:
         buffer = bytearray()
         silence_counter = 0
-
+        chunk_size = 3200  # ~0.2s at 16kHz, 16-bit mono (tune as needed)
+        partial_emit_interval = 2  # emit partial every N chunks
+        chunk_counter = 0
         while True:
             try:
                 if self._close_signal.is_set() and self._audio_queue.empty():
@@ -474,12 +476,26 @@ class WhisperPytorchSTT:
 
             if chunk is None:
                 if buffer:
-                    text = await self._transcribe_async(bytes(buffer))
+                    # Final partial before output
+                    partial = await self._transcribe_async(bytes(buffer))
+                    if partial and partial.strip():
+                        from events import STTChunkEvent
+                        yield STTChunkEvent.create(partial)
+                    text = partial
                     if self._is_valid_output(text):
+                        from events import STTOutputEvent
                         yield STTOutputEvent.create(text)
                 break
 
             buffer.extend(chunk)
+            chunk_counter += 1
+
+            # Emit partials at intervals for real-time feedback
+            if chunk_counter % partial_emit_interval == 0 and len(buffer) > 0:
+                partial = await self._transcribe_async(bytes(buffer))
+                if partial and partial.strip():
+                    from events import STTChunkEvent
+                    yield STTChunkEvent.create(partial)
 
             # Energy-based VAD
             if self._is_silence(chunk):
@@ -492,12 +508,19 @@ class WhisperPytorchSTT:
                 pcm = bytes(buffer)
                 buffer.clear()
                 silence_counter = 0
+                chunk_counter = 0
 
-                text = await self._transcribe_async(pcm)
-                
+                # Emit a final partial before output
+                partial = await self._transcribe_async(pcm)
+                if partial and partial.strip():
+                    from events import STTChunkEvent
+                    yield STTChunkEvent.create(partial)
+                text = partial
                 # Yield only if valid and not a duplicate
                 if self._is_valid_output(text):
+                    from events import STTOutputEvent
                     yield STTOutputEvent.create(text)
+                # After a turn, just reset state and keep listening for new audio
 
     async def send_audio(self, audio_chunk: bytes) -> None:
         if not self._close_signal.is_set():
@@ -537,7 +560,9 @@ class WhisperPytorchSTT:
                 audio_np,
                 language=self.language,
                 fp16=use_fp16,
-                beam_size=5,
+                beam_size=1,             # <--- CHANGED from 5 to 1 (5x Speedup)
+                best_of=1,               # <--- Ensure no parallel sampling
+                temperature=0.0,         # <--- Greedy decoding
                 no_speech_threshold=self.no_speech_threshold, 
                 logprob_threshold=self.logprob_threshold,
                 condition_on_previous_text=False

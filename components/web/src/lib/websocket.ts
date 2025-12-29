@@ -44,9 +44,41 @@ export function createVoiceSession(): VoiceSession {
         activities.add("stt", "Transcription", event.transcript);
         break;
 
-      case "agent_chunk":
+      case "agent_chunk": {
         currentTurn.agentChunk(event.ts, event.text);
+        // Do not add to activities here; wait for agent_end
         break;
+      }
+      case "agent_end": {
+        const currentTurnState = get(currentTurn);
+        
+        if (currentTurnState.response) {
+          // STEP 1: Handle the removal logic carefully.
+          // Only run removeLastOfType if you are SURE you added a 
+          // temporary/loading bubble during the 'agent_chunk' or 'agent_start' phase.
+          // If you strictly followed "Do not add to activities here", 
+          // REMOVE the line below, or it will delete the Agent's PREVIOUS answer.
+          if (activities.removeLastOfType) { 
+             activities.removeLastOfType("agent"); 
+          }
+
+          // STEP 2: Commit the final message to the permanent history
+          activities.add("agent", "Agent Response", currentTurnState.response);
+
+          // STEP 3: THE FIX - Clear the streaming buffer!
+          // You must reset currentTurn so the UI stops rendering the 
+          // "streaming" version of the text alongside the "final" version.
+          // (Use whatever method your store has to clear: .reset(), .clear(), or set to null)
+          if (currentTurn.reset) {
+            currentTurn.reset(); 
+          } else {
+            // Fallback if no reset method exists (adjust based on your state manager)
+            // currentTurn.set({ response: "" }); 
+          }
+        }
+        break;
+      }
+      
 
       case "tool_call":
         activities.add(
@@ -63,11 +95,15 @@ export function createVoiceSession(): VoiceSession {
         logs.log(`Tool result: ${event.result}`);
         break;
 
+
       case "tts_chunk": {
         const currentTurnState = get(currentTurn);
-        if (!currentTurnState.ttsStartTs && currentTurnState.response) {
-          activities.add("agent", "Agent Response", currentTurnState.response);
-        }
+
+        console.log("Audio Chunk Received");
+        console.log("Has TTS Started?", !!currentTurnState.ttsStartTs);
+        console.log("Current Text Response:", currentTurnState.response);
+
+        // Only update audio and state, do not add agent response here
         currentTurn.ttsChunk(event.ts);
         audioPlayback.push(event.audio);
 
@@ -81,6 +117,21 @@ export function createVoiceSession(): VoiceSession {
         }, 300);
         break;
       }
+    //   case "tts_chunk": {
+    //     // We don't need to add the activity here anymore because agent_chunk handles it.
+    //     // However, if you want a fallback (in case audio arrives before text), use this:
+    //     const currentTurnState = get(currentTurn);
+        
+    //     // Fallback: If we have text but no bubble yet, add it.
+    //     // Note: Removed the '!ttsStartTs' check because it was causing the bug.
+    //     if (currentTurnState.response && !hasBubbleBeenAdded(currentTurnState)) {
+    //         activities.add("agent", "Agent Response", currentTurnState.response);
+    //     }
+
+    //     currentTurn.ttsChunk(event.ts);
+    //     audioPlayback.push(event.audio);
+    //     break;
+    // }
     }
   }
 

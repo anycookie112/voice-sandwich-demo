@@ -131,12 +131,11 @@ class KokoroTTS:
 
         await self._text_queue.put(text)
 
-    async def receive_events(self) -> AsyncIterator[TTSChunkEvent]:
+    async def receive_events(self) -> AsyncIterator[object]:
         """
-        Async generator yielding TTSChunkEvent objects with PCM audio chunks.
-
-        Consumes texts from _text_queue and synthesizes them with Kokoro.
+        Async generator yielding TTSChunkEvent objects with PCM audio chunks, and TTSEndEvent at the end of each turn.
         """
+        from events import TTSEndEvent
         while not self._close_signal.is_set():
             # Wait for next text to synthesize, or break if closed
             try:
@@ -178,8 +177,9 @@ class KokoroTTS:
                 # Optional: simulate "real-time" pacing
                 # await asyncio.sleep(self.chunk_ms / 1000.0)
 
-            # You could print a debug "turn complete" similar to ElevenLabs
-            print("[DEBUG] Kokoro: Turn complete")
+            # Emit TTSEndEvent after all audio chunks for this turn
+            yield TTSEndEvent.create()
+            print("[DEBUG] Kokoro: Turn complete (TTSEndEvent emitted)")
 
     async def close(self) -> None:
         """

@@ -77,23 +77,17 @@ ${CARTESIA_TTS_SYSTEM_PROMPT}
 
 llm = get_groq_model(api_key = "")
 # llm = get_ollama_model()
-agent = create_agent(
-    model=llm,
-    tools=[add_to_order, confirm_order],
-    system_prompt=system_prompt,
-    checkpointer=InMemorySaver(),
-)
+
+from data_visualisation.main import main2 as make_agent
+# agent = create_agent(
+#     model=llm,
+#     tools=[add_to_order, confirm_order],
+#     system_prompt=system_prompt,
+#     checkpointer=InMemorySaver(),
+# )
 
 
-
-
-
-
-
-
-
-
-
+agent = make_agent(llm)
 
 
 
@@ -120,14 +114,19 @@ async def _stt_stream(
     Yields:
         STT events (stt_chunk for partials, stt_output for final transcripts)
     """
-    stt = WhisperPytorchSTT(
-            model_size="large-v3-turbo",
-            sample_rate=16000,          # <= IMPORTANT: use the WAV's SR (likely 24000)
-            device="cuda",           # or "cpu" if you want CPU
-            compute_type="float16",  # safe
-            silence_threshold=50.0,  # make VAD more permissive
-            min_silence_chunks=3,    # detect utterance quickly
-        )
+    # stt = WhisperPytorchSTT(
+    #         model_size="large-v3-turbo",
+    #         sample_rate=16000,          # <= IMPORTANT: use the WAV's SR (likely 24000)
+    #         device="cuda",           # or "cpu" if you want CPU
+    #         compute_type="float16",  # safe
+    #         silence_threshold=50.0,  # make VAD more permissive
+    #         min_silence_chunks=3,    # detect utterance quickly
+    #     )
+    stt = LocalWhisperSTT(
+        model_size="large-v3-turbo", # or "distil-large-v3" for 3x speed
+        device="cpu",         # FORCE CUDA
+        compute_type="int8" # FORCE FLOAT16
+    )
 
     async def send_audio():
         """
@@ -169,52 +168,36 @@ async def _agent_stream(
     event_stream: AsyncIterator[VoiceAgentEvent],
 ) -> AsyncIterator[VoiceAgentEvent]:
     """
-    Transform stream: Voice Events → Voice Events (with Agent Responses)
-
-    This function takes a stream of upstream voice agent events and processes them.
-    When an stt_output event arrives, it passes the transcript to the LangChain agent.
-    The agent streams back its response tokens as agent_chunk events.
-    Tool calls and results are also emitted as separate events.
-    All other upstream events are passed through unchanged.
-
-    The passthrough pattern ensures downstream stages (like TTS) can observe all
-    events in the pipeline, not just the ones this stage produces. This enables
-    features like displaying partial transcripts while the agent is thinking.
-
-    Args:
-        event_stream: An async iterator of upstream voice agent events
-
-    Yields:
-        All upstream events plus agent_chunk, tool_call, and tool_result events
+    FIXED: Uses message.content instead of message.text
     """
-    # Generate a unique thread ID for this conversation session
-    # This allows the agent to maintain conversation context across multiple turns
-    # using the checkpointer (InMemorySaver) configured in the agent
     thread_id = str(uuid4())
 
-    # Process each event as it arrives from the upstream STT stage
     async for event in event_stream:
-        # Pass through all events to downstream consumers
+        # 1. Pass through all events (User Input, STT, etc.)
         yield event
 
-        # When we receive a final transcript, invoke the agent
         if event.type == "stt_output":
-            # Stream the agent's response using LangChain's astream method.
-            # stream_mode="messages" yields message chunks as they're generated.
+            print(f"DEBUG: [1] STT Output received: {event.transcript}") 
+            # Invoke LangChain Agent
             stream = agent.astream(
                 {"messages": [HumanMessage(content=event.transcript)]},
                 {"configurable": {"thread_id": thread_id}},
                 stream_mode="messages",
             )
 
-            # Iterate through the agent's streaming response. The stream yields
-            # tuples of (message, metadata), but we only need the message.
             async for message, metadata in stream:
-                # Emit agent chunks (AI messages)
+                # --- PROCESS AI MESSAGES (TEXT) ---
                 if isinstance(message, AIMessage):
-                    # Extract and yield the text content from each message chunk
-                    yield AgentChunkEvent.create(message.text)
-                    # Emit tool calls if present
+                    # FIX 1: Use .content, not .text
+                    content = message.content
+                    
+                    # FIX 2: LangChain sometimes yields empty chunks or list-based content
+                    if isinstance(content, str) and content:
+                        yield AgentChunkEvent.create(content)
+                    
+                    # --- PROCESS TOOL CALLS ---
+                    # Note: handling streaming tool calls can be tricky.
+                    # This assumes message.tool_calls is populated fully or accumulatively.
                     if hasattr(message, "tool_calls") and message.tool_calls:
                         for tool_call in message.tool_calls:
                             yield ToolCallEvent.create(
@@ -223,7 +206,7 @@ async def _agent_stream(
                                 args=tool_call.get("args", {}),
                             )
 
-                # Emit tool results (tool messages)
+                # --- PROCESS TOOL RESULTS ---
                 if isinstance(message, ToolMessage):
                     yield ToolResultEvent.create(
                         tool_call_id=getattr(message, "tool_call_id", ""),
@@ -231,68 +214,194 @@ async def _agent_stream(
                         result=str(message.content) if message.content else "",
                     )
 
-            # Signal that the agent has finished responding for this turn
+            # Signal end of turn
             yield AgentEndEvent.create()
+# async def _agent_stream(
+#     event_stream: AsyncIterator[VoiceAgentEvent],
+# ) -> AsyncIterator[VoiceAgentEvent]:
+#     """
+#     Transform stream: Voice Events → Voice Events (with Agent Responses)
 
+#     This function takes a stream of upstream voice agent events and processes them.
+#     When an stt_output event arrives, it passes the transcript to the LangChain agent.
+#     The agent streams back its response tokens as agent_chunk events.
+#     Tool calls and results are also emitted as separate events.
+#     All other upstream events are passed through unchanged.
+
+#     The passthrough pattern ensures downstream stages (like TTS) can observe all
+#     events in the pipeline, not just the ones this stage produces. This enables
+#     features like displaying partial transcripts while the agent is thinking.
+
+#     Args:
+#         event_stream: An async iterator of upstream voice agent events
+
+#     Yields:
+#         All upstream events plus agent_chunk, tool_call, and tool_result events
+#     """
+#     # Generate a unique thread ID for this conversation session
+#     # This allows the agent to maintain conversation context across multiple turns
+#     # using the checkpointer (InMemorySaver) configured in the agent
+#     thread_id = str(uuid4())
+
+#     # Process each event as it arrives from the upstream STT stage
+#     async for event in event_stream:
+#         # Pass through all events to downstream consumers
+#         yield event
+
+#         # When we receive a final transcript, invoke the agent
+#         if event.type == "stt_output":
+#             # Stream the agent's response using LangChain's astream method.
+#             # stream_mode="messages" yields message chunks as they're generated.
+#             stream = agent.astream(
+#                 {"messages": [HumanMessage(content=event.transcript)]},
+#                 {"configurable": {"thread_id": thread_id}},
+#                 stream_mode="messages",
+#             )
+
+#             # Iterate through the agent's streaming response. The stream yields
+#             # tuples of (message, metadata), but we only need the message.
+#             async for message, metadata in stream:
+#                 # Emit agent chunks (AI messages)
+#                 if isinstance(message, AIMessage):
+#                     # Extract and yield the text content from each message chunk
+#                     yield AgentChunkEvent.create(message.text)
+#                     # Emit tool calls if present
+#                     if hasattr(message, "tool_calls") and message.tool_calls:
+#                         for tool_call in message.tool_calls:
+#                             yield ToolCallEvent.create(
+#                                 id=tool_call.get("id", str(uuid4())),
+#                                 name=tool_call.get("name", "unknown"),
+#                                 args=tool_call.get("args", {}),
+#                             )
+
+#                 # Emit tool results (tool messages)
+#                 if isinstance(message, ToolMessage):
+#                     yield ToolResultEvent.create(
+#                         tool_call_id=getattr(message, "tool_call_id", ""),
+#                         name=getattr(message, "name", "unknown"),
+#                         result=str(message.content) if message.content else "",
+#                     )
+
+#             # Signal that the agent has finished responding for this turn
+#             yield AgentEndEvent.create()
+
+
+# async def _tts_stream(
+#     event_stream: AsyncIterator[VoiceAgentEvent],
+# ) -> AsyncIterator[VoiceAgentEvent]:
+#     """
+#     Transform stream: Voice Events → Voice Events (with Audio)
+
+#     This function takes a stream of upstream voice agent events and processes them.
+#     When agent_chunk events arrive, it sends the text to Cartesia for TTS synthesis.
+#     Audio is streamed back as tts_chunk events as it's generated.
+#     All upstream events are passed through unchanged.
+
+#     It uses merge_async_iters to combine two concurrent streams:
+#     - process_upstream(): Iterates through incoming events, yields them for
+#       passthrough, and sends agent text chunks to Cartesia for synthesis.
+#     - tts.receive_events(): Yields audio chunks from Cartesia as they are
+#       synthesized.
+
+#     The merge utility runs both iterators concurrently, yielding items from
+#     either stream as they become available. This allows audio generation to
+#     begin before the agent has finished generating all text, minimizing latency.
+
+#     Args:
+#         event_stream: An async iterator of upstream voice agent events
+
+#     Yields:
+#         All upstream events plus tts_chunk events for synthesized audio
+#     """
+#     # tts = VibeVoiceAsyncTTS(model_path = "/app/models/VibeVoice-Realtime-0.5B")
+
+#     tts = KokoroTTS()
+
+#     async def process_upstream() -> AsyncIterator[VoiceAgentEvent]:
+#         """
+#         Process upstream events, yielding them while sending text to Cartesia.
+
+#         This async generator serves two purposes:
+#         1. Pass through all upstream events (stt_chunk, stt_output, agent_chunk)
+#            so downstream consumers can observe the full event stream.
+#         2. Buffer agent_chunk text and send to Cartesia when agent_end arrives.
+#            This ensures the full response is sent at once for better TTS quality.
+#         """
+#         buffer: list[str] = []
+#         async for event in event_stream:
+#             # Pass through all events to downstream consumers
+#             yield event
+#             # Buffer agent text chunks
+#             if event.type == "agent_chunk":
+#                 buffer.append(event.text)
+#             # Send all buffered text to Cartesia when agent finishes
+#             if event.type == "agent_end":
+#                 await tts.send_text("".join(buffer))
+#                 buffer = []
+
+#     try:
+#         # Merge the processed upstream events with TTS audio events
+#         # Both streams run concurrently, yielding events as they arrive
+#         async for event in merge_async_iters(process_upstream(), tts.receive_events()):
+#             yield event
+#     finally:
+#         # Cleanup: close the WebSocket connection to Cartesia
+#         await tts.close()
+
+
+import re # Add this import at the top
 
 async def _tts_stream(
     event_stream: AsyncIterator[VoiceAgentEvent],
 ) -> AsyncIterator[VoiceAgentEvent]:
-    """
-    Transform stream: Voice Events → Voice Events (with Audio)
-
-    This function takes a stream of upstream voice agent events and processes them.
-    When agent_chunk events arrive, it sends the text to Cartesia for TTS synthesis.
-    Audio is streamed back as tts_chunk events as it's generated.
-    All upstream events are passed through unchanged.
-
-    It uses merge_async_iters to combine two concurrent streams:
-    - process_upstream(): Iterates through incoming events, yields them for
-      passthrough, and sends agent text chunks to Cartesia for synthesis.
-    - tts.receive_events(): Yields audio chunks from Cartesia as they are
-      synthesized.
-
-    The merge utility runs both iterators concurrently, yielding items from
-    either stream as they become available. This allows audio generation to
-    begin before the agent has finished generating all text, minimizing latency.
-
-    Args:
-        event_stream: An async iterator of upstream voice agent events
-
-    Yields:
-        All upstream events plus tts_chunk events for synthesized audio
-    """
-    tts = VibeVoiceAsyncTTS(model_path = "/home/robust/models/VibeVoice-Realtime-0.5B")
+    
+    # Initialize your TTS (VibeVoice or Kokoro)
+    # tts = VibeVoiceAsyncTTS(model_path="/app/models/VibeVoice-Realtime-0.5B")
+    tts = VibeVoiceAsyncTTS(model_path="/home/robust/models/VibeVoice-Realtime-0.5B")
+    # tts = KokoroTTS() 
 
     async def process_upstream() -> AsyncIterator[VoiceAgentEvent]:
-        """
-        Process upstream events, yielding them while sending text to Cartesia.
-
-        This async generator serves two purposes:
-        1. Pass through all upstream events (stt_chunk, stt_output, agent_chunk)
-           so downstream consumers can observe the full event stream.
-        2. Buffer agent_chunk text and send to Cartesia when agent_end arrives.
-           This ensures the full response is sent at once for better TTS quality.
-        """
-        buffer: list[str] = []
+        # Buffer to accumulate partial text chunks
+        text_buffer = ""
+        
         async for event in event_stream:
-            # Pass through all events to downstream consumers
+            # 1. Pass ALL events to the UI immediately (So text bubbles appear)
             yield event
-            # Buffer agent text chunks
+
+            # 2. Process Text for TTS
             if event.type == "agent_chunk":
-                buffer.append(event.text)
-            # Send all buffered text to Cartesia when agent finishes
-            if event.type == "agent_end":
-                await tts.send_text("".join(buffer))
-                buffer = []
+                text_buffer += event.text
+                
+                # Check if we have a full sentence (ends in . ? ! followed by space or newline)
+                # We split iteratively to handle multiple sentences in one chunk
+                while True:
+                    # Regex: Find punctuation [.?!] followed by whitespace or end of string
+                    match = re.search(r'([.?!]+)(\s+|$)', text_buffer)
+                    if match:
+                        end_idx = match.end()
+                        sentence = text_buffer[:end_idx]
+                        
+                        # Send the complete sentence to TTS
+                        if sentence.strip():
+                            await tts.send_text(sentence)
+                        
+                        # Remove processed sentence from buffer
+                        text_buffer = text_buffer[end_idx:]
+                    else:
+                        # No end of sentence found yet, keep buffering
+                        break
+            
+            # 3. Flush remaining text when agent is done
+            elif event.type == "agent_end":
+                if text_buffer.strip():
+                    await tts.send_text(text_buffer)
+                text_buffer = "" # Reset for next turn
 
     try:
-        # Merge the processed upstream events with TTS audio events
-        # Both streams run concurrently, yielding events as they arrive
+        # Merge the upstream (Agent) and downstream (TTS Audio) streams
         async for event in merge_async_iters(process_upstream(), tts.receive_events()):
             yield event
     finally:
-        # Cleanup: close the WebSocket connection to Cartesia
         await tts.close()
 
 
@@ -324,4 +433,12 @@ app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", port=8000, reload=True)
+    uvicorn.run("main:app", port=8112, reload=True)
+    # uvicorn.run(
+    #     app, 
+    #     host="0.0.0.0", 
+    #     port=8000,
+    #     # Point to where they were copied in the container
+    #     ssl_keyfile="/app/key.pem", 
+    #     ssl_certfile="/app/cert.pem"
+    # )
